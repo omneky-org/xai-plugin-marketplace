@@ -335,14 +335,33 @@
     },
     {
       "name": "omneky",
-      "description": "Omneky ads, analytics, product catalogue, and creative generation. Sign in with an Omneky account to launch and manage campaigns from Grok.",
+      "description": "Paid-media MCP for Meta, Google, TikTok, LinkedIn & Reddit — launch campaigns, generate creatives, manage brand catalogue, report ROAS/CTR. Sign in with Omneky on first connect.",
       "category": "development",
       "source": {
         "type": "local",
         "path": "./external_plugins/omneky"
       },
       "homepage": "https://www.omneky.com",
-      "keywords": ["omneky", "omneky ads", "omneky mcp"],
+      "keywords": [
+        "omneky",
+        "paid media",
+        "performance ads",
+        "meta ads",
+        "facebook ads",
+        "google ads",
+        "tiktok ads",
+        "linkedin ads",
+        "reddit ads",
+        "roas",
+        "ctr",
+        "campaigns",
+        "creative generation",
+        "brand catalogue",
+        "mcp",
+        "analytics",
+        "omneky ads",
+        "omneky mcp"
+      ],
       "domains": ["omneky.com", "mcp.omneky.com", "app.omneky.com"]
     },
     {

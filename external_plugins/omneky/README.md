@@ -1,7 +1,10 @@
 # Omneky plugin for Grok Build
 
-Connect Grok Build to [Omneky](https://www.omneky.com) — ads analytics, product
-catalogue, multi-channel launch, and creative generation.
+Omneky connects Grok to paid media: analyze ROAS/CTR/spend by creative,
+campaign, or channel; manage your brand product catalogue; generate image ads
+and product videos; and launch or pause campaigns on Meta/Facebook, Google,
+LinkedIn, Reddit, and TikTok. Hosted MCP: https://mcp.omneky.com/mcp. New
+launches stay paused unless you ask to go live.
 
 ## Installation
 
