@@ -1,0 +1,31 @@
+{
+  "name": "omneky",
+  "version": "1.0.1",
+  "description": "Paid-media MCP for Meta, Google, TikTok, LinkedIn & Reddit — launch campaigns, generate creatives, manage brand catalogue, report ROAS/CTR. Sign in with Omneky on first connect.",
+  "author": {
+    "name": "Omneky",
+    "url": "https://github.com/omneky-org"
+  },
+  "homepage": "https://www.omneky.com",
+  "license": "Proprietary",
+  "keywords": [
+    "omneky",
+    "paid media",
+    "performance ads",
+    "meta ads",
+    "facebook ads",
+    "google ads",
+    "tiktok ads",
+    "linkedin ads",
+    "reddit ads",
+    "roas",
+    "ctr",
+    "campaigns",
+    "creative generation",
+    "brand catalogue",
+    "mcp",
+    "analytics",
+    "omneky ads",
+    "omneky mcp"
+  ]
+}
