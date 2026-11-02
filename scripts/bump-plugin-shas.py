@@ -380,7 +380,60 @@ def open_daily_base(
     return pr_url, tip
 
 
-def apply_plugin_bump(
+_GITHUB_PATH_SEGMENT = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+def upstream_compare_url(source_url: str | None, old_sha: str, new_sha: str) -> str | None:
+    """GitHub compare link for a pin bump, or None when one cannot be built.
+
+    Shape is ``{source_url}/compare/{old}...{new}`` after a trailing ``.git``
+    is removed and the URL is reduced to ``owner/repo``. Only github.com uses
+    that path. GitLab, Bitbucket, missing URLs, and values that are not 40
+    hex digits return None so the PR body never carries a dead link or a
+    copied credential.
+    """
+    if not isinstance(source_url, str) or not source_url.strip():
+        return None
+    old = old_sha.strip().lower() if isinstance(old_sha, str) else ""
+    new = new_sha.strip().lower() if isinstance(new_sha, str) else ""
+    if not SHA_RE.match(old) or not SHA_RE.match(new):
+        return None
+    try:
+        parsed = urlparse(source_url.strip())
+    except ValueError:
+        return None
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    host = (parsed.hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    if host != "github.com":
+        return None
+    path = (parsed.path or "").rstrip("/")
+    if path.endswith(".git"):
+        path = path[:-4]
+    parts = [part for part in path.split("/") if part]
+    if len(parts) < 2:
+        return None
+    owner, repo = parts[0], parts[1]
+    if not _GITHUB_PATH_SEGMENT.match(owner) or not _GITHUB_PATH_SEGMENT.match(repo):
+        return None
+    if owner in {".", ".."} or repo in {".", ".."}:
+        return None
+    return f"https://github.com/{owner}/{repo}/compare/{old}...{new}"
+
+
+def upstream_diff_line(source_url: str | None, old_sha: str, new_sha: str) -> str:
+    """One PR-body bullet: a compare URL, or an explicit unavailable note."""
+    compare = upstream_compare_url(source_url, old_sha, new_sha)
+    if compare:
+        return f"- **upstream diff:** {compare}"
+    if not isinstance(source_url, str) or not source_url.strip():
+        return "- **upstream diff:** unavailable (no source URL)"
+    return "- **upstream diff:** unavailable (no GitHub compare URL for this source)"
+
+
+def plugin_bump_pr_text(
     *,
     name: str,
     old_sha: str,
@@ -388,14 +441,10 @@ def apply_plugin_bump(
     old_version: str,
     new_version: str,
     url: str,
-    branch: str,
     daily_branch: str,
-    daily_sha: str,
     run_url: str,
-    force: bool,
-    dry_run: bool,
-) -> str | None:
-    """Branch from daily tip, commit one plugin bump, open PR -> daily."""
+) -> tuple[str, str]:
+    """Title and body for one plugin pin-bump pull request."""
     short_old = old_sha[:7]
     short_new = new_sha[:7]
     ver_old = old_version or "(none)"
@@ -425,6 +474,7 @@ def apply_plugin_bump(
         version_line,
         f"- **old sha:** `{old_sha}`",
         f"- **new sha:** `{new_sha}` (HEAD when the bump was observed)",
+        upstream_diff_line(url, old_sha, new_sha),
         f"- **base:** `{daily_branch}`",
         "",
         "Catalog SHA updated and `.grok-plugin/plugin-index.json` regenerated "
@@ -438,6 +488,35 @@ def apply_plugin_bump(
     if run_url:
         body_lines.extend(["", f"Triggered by: {run_url}"])
     body = "\n".join(body_lines) + "\n"
+    return title, body
+
+
+def apply_plugin_bump(
+    *,
+    name: str,
+    old_sha: str,
+    new_sha: str,
+    old_version: str,
+    new_version: str,
+    url: str,
+    branch: str,
+    daily_branch: str,
+    daily_sha: str,
+    run_url: str,
+    force: bool,
+    dry_run: bool,
+) -> str | None:
+    """Branch from daily tip, commit one plugin bump, open PR -> daily."""
+    title, body = plugin_bump_pr_text(
+        name=name,
+        old_sha=old_sha,
+        new_sha=new_sha,
+        old_version=old_version,
+        new_version=new_version,
+        url=url,
+        daily_branch=daily_branch,
+        run_url=run_url,
+    )
 
     if dry_run:
         print(
