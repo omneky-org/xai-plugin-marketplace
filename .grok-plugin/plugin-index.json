@@ -8,7 +8,8 @@
         "mcpServers": [
           {
             "name": "axiom",
-            "description": "http"
+            "description": "http",
+            "url": "https://mcp.axiom.co/mcp"
           }
         ],
         "skills": [
@@ -78,7 +79,8 @@
         "mcpServers": [
           {
             "name": "browser-use",
-            "description": "stdio"
+            "description": "stdio",
+            "command": "uvx --python 3.12 browser-use@latest --cli-mcp"
           }
         ],
         "skills": [
@@ -96,7 +98,8 @@
         "mcpServers": [
           {
             "name": "chrome-devtools",
-            "description": "stdio"
+            "description": "stdio",
+            "command": "npx chrome-devtools-mcp@1.8.0"
           }
         ],
         "skills": [
@@ -144,23 +147,28 @@
         "mcpServers": [
           {
             "name": "cloudflare-api",
-            "description": "http"
+            "description": "http",
+            "url": "https://mcp.cloudflare.com/mcp"
           },
           {
             "name": "cloudflare-bindings",
-            "description": "http"
+            "description": "http",
+            "url": "https://bindings.mcp.cloudflare.com/mcp"
           },
           {
             "name": "cloudflare-builds",
-            "description": "http"
+            "description": "http",
+            "url": "https://builds.mcp.cloudflare.com/mcp"
           },
           {
             "name": "cloudflare-docs",
-            "description": "http"
+            "description": "http",
+            "url": "https://docs.mcp.cloudflare.com/mcp"
           },
           {
             "name": "cloudflare-observability",
-            "description": "http"
+            "description": "http",
+            "url": "https://observability.mcp.cloudflare.com/mcp"
           }
         ],
         "skills": [
@@ -212,7 +220,8 @@
         "mcpServers": [
           {
             "name": "exa",
-            "description": "http"
+            "description": "http",
+            "url": "https://mcp.exa.ai/mcp/oauth"
           }
         ],
         "skills": [
@@ -230,7 +239,8 @@
         "mcpServers": [
           {
             "name": "figma",
-            "description": "http"
+            "description": "http",
+            "url": "https://mcp.figma.com/mcp"
           }
         ],
         "skills": [
@@ -306,7 +316,8 @@
         "mcpServers": [
           {
             "name": "firecrawl",
-            "description": "http"
+            "description": "http",
+            "url": "https://mcp.firecrawl.dev/v2/mcp"
           }
         ],
         "skills": [
@@ -364,7 +375,8 @@
         "mcpServers": [
           {
             "name": "mongodb",
-            "description": "stdio"
+            "description": "stdio",
+            "command": "npx -y 'mongodb-mcp-server@<3'"
           }
         ],
         "skills": [
@@ -406,7 +418,8 @@
         "mcpServers": [
           {
             "name": "mongodb-atlas",
-            "description": "http"
+            "description": "http",
+            "url": "https://mcp.mongodb.com/"
           }
         ],
         "skills": [
@@ -443,7 +456,8 @@
         "mcpServers": [
           {
             "name": "neon",
-            "description": "http"
+            "description": "http",
+            "url": "https://mcp.neon.tech/mcp"
           }
         ],
         "skills": [
@@ -469,7 +483,8 @@
         "mcpServers": [
           {
             "name": "netlify",
-            "description": "http"
+            "description": "http",
+            "url": "https://netlify-mcp.netlify.app/mcp"
           }
         ],
         "skills": [
@@ -746,7 +761,8 @@
         "mcpServers": [
           {
             "name": "railway",
-            "description": "http"
+            "description": "http",
+            "url": "https://mcp.railway.com"
           }
         ],
         "skills": [
@@ -764,7 +780,8 @@
         "mcpServers": [
           {
             "name": "sentry",
-            "description": "http"
+            "description": "http",
+            "url": "https://mcp.sentry.dev/mcp?utm_source=plugin"
           }
         ],
         "skills": [
@@ -826,7 +843,8 @@
         "mcpServers": [
           {
             "name": "stripe",
-            "description": "http"
+            "description": "http",
+            "url": "https://mcp.stripe.com"
           }
         ],
         "skills": [
@@ -942,7 +960,8 @@
         "mcpServers": [
           {
             "name": "tavily",
-            "description": "http"
+            "description": "http",
+            "url": "https://mcp.tavily.com/mcp"
           }
         ],
         "skills": [
@@ -988,7 +1007,8 @@
         "mcpServers": [
           {
             "name": "tinyfish",
-            "description": "http"
+            "description": "http",
+            "url": "https://agent.tinyfish.ai/mcp"
           }
         ],
         "skills": [
@@ -1067,7 +1087,8 @@
         "mcpServers": [
           {
             "name": "vercel",
-            "description": "http"
+            "description": "http",
+            "url": "https://mcp.vercel.com"
           }
         ],
         "skills": [
@@ -1221,7 +1242,8 @@
         "mcpServers": [
           {
             "name": "wix-mcp",
-            "description": "http"
+            "description": "http",
+            "url": "https://mcp.wix.com/mcp"
           }
         ],
         "skills": [

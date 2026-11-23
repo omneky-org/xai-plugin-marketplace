@@ -86,7 +86,10 @@ def generate(repo_root: Path) -> dict:
             if not name:
                 raise RuntimeError("catalog entry without a name")
             root, sha = resolve_source(entry, repo_root, tmp_root, idx)
-            extracted = plugin_catalog.extract_plugin(root)
+            try:
+                extracted = plugin_catalog.extract_plugin(root)
+            except RuntimeError as e:
+                raise RuntimeError(f"plugin '{name}': {e}") from e
             record: dict = {}
             if sha:
                 record["sha"] = sha

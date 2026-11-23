@@ -32,7 +32,7 @@ A plugin is a directory bundling any combination of:
 | MCP servers | `.mcp.json` | MCP server configs |
 | LSP servers | `.lsp.json` | Language server configs |
 
-An optional `plugin.json` manifest adds metadata or overrides component paths.
+An optional `plugin.json` manifest adds metadata or overrides component paths. If the manifest and `.mcp.json` / `.lsp.json` define a server with the same name, the configs must be identical; otherwise index generation fails.
 
 ## Catalog format
 

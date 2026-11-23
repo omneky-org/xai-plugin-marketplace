@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import subprocess
 import time
 from pathlib import Path
@@ -225,19 +226,76 @@ def transport_hint(config: dict) -> str:
     return str(transport) if transport else ""
 
 
+def launch_fields(config) -> dict:
+    """What a server config will actually run or connect to.
+
+    Kept verbatim (no truncation or whitespace folding) so the index diff on
+    a pin bump shows exactly what changed.
+    """
+    if not isinstance(config, dict):
+        return {}
+    fields: dict = {}
+    command = config.get("command")
+    if command:
+        parts = [str(command)]
+        args = config.get("args")
+        if isinstance(args, list):
+            parts.extend(str(a) for a in args)
+        elif args is not None:
+            parts.append(str(args))
+        fields["command"] = shlex.join(parts)
+    url = config.get("url")
+    if url:
+        fields["url"] = str(url)
+    return fields
+
+
+def merge_servers(
+    on_disk: dict, declared: dict, category: str, config_path: str
+) -> dict:
+    """Merge manifest-declared servers over on-disk ones (manifest wins).
+
+    A name defined in both places with differing configs is an error: the
+    on-disk file would otherwise misrepresent what the plugin runs.
+    """
+    servers = dict(on_disk)
+    for name, config in declared.items():
+        if name in servers and servers[name] != config:
+            raise RuntimeError(
+                f"{category} server {name!r} is defined in both the plugin "
+                f"manifest and {config_path} with different configs. The "
+                f"manifest overrides {config_path}; remove the duplicate or "
+                f"make the two configs identical."
+            )
+        servers[name] = config
+    return servers
+
+
+def server_item(name: str, config, description: str = "") -> dict:
+    item = make_item(name, description)
+    item.update(launch_fields(config))
+    return item
+
+
 def scan_mcp_servers(root: Path, manifest: dict) -> list[dict]:
-    servers: dict[str, dict] = {}
+    on_disk: dict = {}
     declared = manifest.get("mcpServers")
     config_rel = declared if isinstance(declared, str) else ".mcp.json"
     mcp_path = resolve_inside(root, config_rel)
     if mcp_path and mcp_path.is_file():
         data = load_json_file(mcp_path)
         if isinstance(data, dict) and isinstance(data.get("mcpServers"), dict):
-            servers.update(data["mcpServers"])
-    if isinstance(declared, dict):
-        for name, config in declared.items():
-            servers.setdefault(name, config)
-    return [make_item(name, transport_hint(config)) for name, config in servers.items()]
+            on_disk = data["mcpServers"]
+    servers = merge_servers(
+        on_disk,
+        declared if isinstance(declared, dict) else {},
+        "mcpServers",
+        config_rel,
+    )
+    return [
+        server_item(name, config, transport_hint(config))
+        for name, config in servers.items()
+    ]
 
 
 def scan_hooks(root: Path, manifest: dict) -> list[dict]:
@@ -270,22 +328,25 @@ def scan_hooks(root: Path, manifest: dict) -> list[dict]:
 
 
 def scan_lsp_servers(root: Path, manifest: dict) -> list[dict]:
-    servers: dict[str, dict] = {}
+    on_disk: dict = {}
     lsp_path = resolve_inside(root, ".lsp.json")
     if lsp_path and lsp_path.is_file():
         data = load_json_file(lsp_path)
         if isinstance(data, dict):
-            servers.update(
+            on_disk = (
                 data.get("lspServers")
                 if isinstance(data.get("lspServers"), dict)
                 else data
             )
     declared = manifest.get("lspServers")
-    if isinstance(declared, dict):
-        for name, config in declared.items():
-            servers.setdefault(name, config)
+    servers = merge_servers(
+        on_disk,
+        declared if isinstance(declared, dict) else {},
+        "lspServers",
+        ".lsp.json",
+    )
     return [
-        make_item(name)
+        server_item(name, config)
         for name, config in servers.items()
         if isinstance(config, dict)
     ]
