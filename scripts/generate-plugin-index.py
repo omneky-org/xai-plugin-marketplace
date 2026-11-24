@@ -77,7 +77,7 @@ def resolve_source(
 
 
 def generate(repo_root: Path) -> dict:
-    catalog = json.loads((repo_root / CATALOG_PATH).read_text(encoding="utf-8"))
+    catalog = plugin_catalog.load_catalog_file(repo_root / CATALOG_PATH)
     plugins_out: dict[str, dict] = {}
     with tempfile.TemporaryDirectory(prefix="plugin-index-") as tmp:
         tmp_root = Path(tmp)
@@ -86,7 +86,10 @@ def generate(repo_root: Path) -> dict:
             if not name:
                 raise RuntimeError("catalog entry without a name")
             root, sha = resolve_source(entry, repo_root, tmp_root, idx)
-            extracted = plugin_catalog.extract_plugin(root)
+            try:
+                extracted = plugin_catalog.extract_plugin(root)
+            except RuntimeError as e:
+                raise RuntimeError(f"plugin '{name}': {e}") from e
             record: dict = {}
             if sha:
                 record["sha"] = sha

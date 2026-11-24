@@ -90,7 +90,7 @@ def pacific_date() -> str:
 
 
 def load_catalog() -> dict:
-    return json.loads((REPO_ROOT / CATALOG_PATH).read_text(encoding="utf-8"))
+    return plugin_catalog.load_catalog_file(REPO_ROOT / CATALOG_PATH)
 
 
 def url_entries(catalog: dict) -> list[dict]:
