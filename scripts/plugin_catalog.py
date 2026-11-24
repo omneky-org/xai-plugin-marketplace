@@ -10,14 +10,22 @@ sha / local path):
 
 Used by generate-plugin-index.py (full catalog) and bump-plugin-shas.py
 (version gate at HEAD vs pin).
+
+Fail-closed rule: a config file that is absent may fall back (e.g. to the
+next manifest path or to manifest-declared hooks). A config file that is
+present but unusable (too large, unreadable, not UTF-8, not JSON, wrong shape,
+escapes the plugin root) raises PluginExtractionError instead, so the index
+never silently omits or substitutes what the client would load.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import time
+import unicodedata
 from pathlib import Path
 
 MAX_ITEMS_PER_CATEGORY = 50
@@ -33,14 +41,84 @@ MANIFEST_PATHS = [
     Path(".claude-plugin/plugin.json"),
 ]
 
+# Catalog plugin names: ASCII lowercase kebab-case only. ASCII-only also
+# rules out Unicode lookalikes (Cyrillic, fullwidth, ...) of official names.
+PLUGIN_NAME_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+
 CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+# Invisible categories: controls, format (bidi overrides/isolates/marks,
+# zero-width, tag characters, BOM, soft hyphen), and surrogates.
+INVISIBLE_CATEGORIES = {"Cc", "Cf", "Cs"}
+# ZWNJ / ZWJ are needed by Arabic/Persian/Indic text and emoji sequences.
+# Descriptions keep them only between two visible non-ASCII characters;
+# anywhere else (e.g. inside an ASCII word) they are dropped. Names never
+# allow them.
+JOINERS = {"\u200c", "\u200d"}
+
+
+class PluginExtractionError(RuntimeError):
+    """A plugin file is present but cannot be indexed faithfully."""
+
+
+def plugin_name_error(name) -> str | None:
+    """Return why `name` is not a valid catalog plugin name, or None if valid."""
+    if not isinstance(name, str):
+        return f"name must be a string, got {type(name).__name__}"
+    if not PLUGIN_NAME_RE.fullmatch(name):
+        return (
+            f"name {ascii(name)} must be ASCII lowercase kebab-case "
+            f"(letters a-z, digits, single hyphens between words)"
+        )
+    return None
+
+
+def is_invisible(ch: str) -> bool:
+    return unicodedata.category(ch) in INVISIBLE_CATEGORIES and not ch.isspace()
+
+
+def _joinable(ch: str) -> bool:
+    return ord(ch) > 0x7F and not ch.isspace() and not is_invisible(ch)
+
+
+def strip_invisible(text: str) -> str:
+    out = []
+    last = len(text) - 1
+    for i, ch in enumerate(text):
+        if not is_invisible(ch):
+            out.append(ch)
+        elif (
+            ch in JOINERS
+            and 0 < i < last
+            and _joinable(text[i - 1])
+            and _joinable(text[i + 1])
+        ):
+            out.append(ch)
+    return "".join(out)
 
 
 def clean(text: str) -> str:
-    text = re.sub(r"\s+", " ", CONTROL_CHARS_RE.sub("", text)).strip()
+    text = strip_invisible(CONTROL_CHARS_RE.sub("", text))
+    text = re.sub(r"\s+", " ", text).strip()
     if len(text) > MAX_STRING_LEN:
-        text = text[: MAX_STRING_LEN - 1].rstrip() + "\u2026"
+        head = text[: MAX_STRING_LEN - 1].rstrip()
+        text = head.rstrip("".join(JOINERS)).rstrip() + "\u2026"
     return text
+
+
+def clean_name(name: str) -> str:
+    """clean() for component identifiers; invisible characters are an error.
+
+    Stripping would make the index show a different identifier than the one
+    the client stores, so refuse instead.
+    """
+    for ch in name:
+        if is_invisible(ch):
+            raise PluginExtractionError(
+                f"component name {ascii(name)} contains invisible or "
+                f"bidirectional control character U+{ord(ch):04X}"
+            )
+    return clean(name)
 
 
 def resolve_inside(root: Path, relative) -> Path | None:
@@ -60,18 +138,82 @@ def contained(path: Path, root: Path) -> bool:
         return False
 
 
+def locate(root: Path, relative) -> Path | None:
+    """Return the regular file at root/relative, or None if nothing is there.
+
+    Anything present at that path that is not a regular file inside the root
+    (directory, symlink escaping the root, ...) raises rather than reading as
+    absent, so callers cannot fall back past it.
+    """
+    try:
+        present = os.path.lexists(root / relative)
+    except (OSError, ValueError):
+        present = False
+    if not present:
+        return None
+    resolved = resolve_inside(root, relative)
+    if resolved is None:
+        raise PluginExtractionError(f"{relative}: resolves outside the plugin root")
+    if not resolved.is_file():
+        raise PluginExtractionError(f"{relative}: exists but is not a regular file")
+    return resolved
+
+
 def read_text_limited(path: Path) -> str:
     with open(path, encoding="utf-8", errors="replace") as f:
         return f.read(MAX_TEXT_READ_BYTES)
 
 
-def load_json_file(path: Path):
+def load_json_file(path: Path, label) -> dict:
+    """Load a present JSON config file whose top level must be an object.
+
+    Raises PluginExtractionError (never returns None) when the file is too
+    large, unreadable, not UTF-8, not JSON, or not an object.
+    """
     try:
-        if path.stat().st_size > MAX_JSON_BYTES:
-            return None
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        with open(path, "rb") as f:
+            raw = f.read(MAX_JSON_BYTES + 1)
+    except OSError as e:
+        raise PluginExtractionError(
+            f"{label}: cannot read file: {e.strerror or e}"
+        ) from e
+    if len(raw) > MAX_JSON_BYTES:
+        raise PluginExtractionError(
+            f"{label}: file exceeds the {MAX_JSON_BYTES}-byte limit for "
+            f"indexed JSON configs"
+        )
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise PluginExtractionError(
+            f"{label}: not valid UTF-8 ({e.reason} at byte {e.start})"
+        ) from e
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise PluginExtractionError(
+            f"{label}: invalid JSON: {e.msg} at line {e.lineno} column {e.colno}"
+        ) from e
+    except RecursionError as e:
+        raise PluginExtractionError(f"{label}: JSON is nested too deeply") from e
+    if not isinstance(data, dict):
+        raise PluginExtractionError(
+            f"{label}: top-level JSON value must be an object, got "
+            f"{type(data).__name__}"
+        )
+    return data
+
+
+def optional_object(data: dict, key: str, label) -> dict | None:
+    """data[key] when present (must be an object), else None."""
+    if key not in data:
         return None
+    value = data[key]
+    if not isinstance(value, dict):
+        raise PluginExtractionError(
+            f"{label}: `{key}` must be an object, got {type(value).__name__}"
+        )
+    return value
 
 
 def parse_frontmatter(path: Path) -> dict[str, str]:
@@ -130,7 +272,7 @@ def first_body_line(path: Path) -> str:
 
 
 def make_item(name: str, description: str = "") -> dict:
-    item = {"name": clean(name)}
+    item = {"name": clean_name(name)}
     description = clean(description)
     if description:
         item["description"] = description
@@ -138,12 +280,11 @@ def make_item(name: str, description: str = "") -> dict:
 
 
 def load_manifest(root: Path) -> dict:
+    # Only fall through to the next manifest path when this one is absent.
     for rel in MANIFEST_PATHS:
-        path = resolve_inside(root, rel)
-        if path and path.is_file():
-            data = load_json_file(path)
-            if isinstance(data, dict):
-                return data
+        path = locate(root, rel)
+        if path is not None:
+            return load_json_file(path, rel)
     return {}
 
 
@@ -229,10 +370,10 @@ def scan_mcp_servers(root: Path, manifest: dict) -> list[dict]:
     servers: dict[str, dict] = {}
     declared = manifest.get("mcpServers")
     config_rel = declared if isinstance(declared, str) else ".mcp.json"
-    mcp_path = resolve_inside(root, config_rel)
-    if mcp_path and mcp_path.is_file():
-        data = load_json_file(mcp_path)
-        if isinstance(data, dict) and isinstance(data.get("mcpServers"), dict):
+    mcp_path = locate(root, config_rel)
+    if mcp_path is not None:
+        data = load_json_file(mcp_path, config_rel)
+        if optional_object(data, "mcpServers", config_rel) is not None:
             servers.update(data["mcpServers"])
     if isinstance(declared, dict):
         for name, config in declared.items():
@@ -242,20 +383,26 @@ def scan_mcp_servers(root: Path, manifest: dict) -> list[dict]:
 
 def scan_hooks(root: Path, manifest: dict) -> list[dict]:
     data = None
-    hooks_path = resolve_inside(root, Path("hooks") / "hooks.json")
-    if hooks_path and hooks_path.is_file():
-        data = load_json_file(hooks_path)
+    label = "manifest hooks"
+    hooks_rel = Path("hooks") / "hooks.json"
+    hooks_path = locate(root, hooks_rel)
+    if hooks_path is not None:
+        label = hooks_rel
+        data = load_json_file(hooks_path, hooks_rel)
     if data is None:
         declared = manifest.get("hooks")
         if isinstance(declared, dict):
             data = declared
         elif isinstance(declared, str):
-            declared_path = resolve_inside(root, declared)
-            if declared_path and declared_path.is_file():
-                data = load_json_file(declared_path)
+            declared_path = locate(root, declared)
+            if declared_path is not None:
+                label = declared
+                data = load_json_file(declared_path, declared)
     if not isinstance(data, dict):
         return []
-    hooks_obj = data.get("hooks") if isinstance(data.get("hooks"), dict) else data
+    hooks_obj = optional_object(data, "hooks", label)
+    if hooks_obj is None:
+        hooks_obj = data
     items = []
     for event, entries in hooks_obj.items():
         if not isinstance(entries, list):
@@ -271,15 +418,11 @@ def scan_hooks(root: Path, manifest: dict) -> list[dict]:
 
 def scan_lsp_servers(root: Path, manifest: dict) -> list[dict]:
     servers: dict[str, dict] = {}
-    lsp_path = resolve_inside(root, ".lsp.json")
-    if lsp_path and lsp_path.is_file():
-        data = load_json_file(lsp_path)
-        if isinstance(data, dict):
-            servers.update(
-                data.get("lspServers")
-                if isinstance(data.get("lspServers"), dict)
-                else data
-            )
+    lsp_path = locate(root, ".lsp.json")
+    if lsp_path is not None:
+        data = load_json_file(lsp_path, ".lsp.json")
+        nested = optional_object(data, "lspServers", ".lsp.json")
+        servers.update(nested if nested is not None else data)
     declared = manifest.get("lspServers")
     if isinstance(declared, dict):
         for name, config in declared.items():

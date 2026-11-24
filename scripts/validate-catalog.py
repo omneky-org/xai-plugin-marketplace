@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 """Validate the marketplace catalog index.
 
-Enforces, for every plugin with `"source": {"source": "url", ...}`:
+Enforces, for every plugin:
+
+  - `name` is an ASCII lowercase kebab-case string (no Unicode lookalikes)
+  - `name` is unique within the catalog file
+
+and for every plugin with `"source": {"source": "url", ...}`:
 
   - `sha` field is present and non-empty
   - `sha` is a 40-character lowercase hex string (full commit SHA, not a
@@ -28,6 +33,8 @@ import re
 import sys
 from pathlib import Path
 
+from plugin_catalog import plugin_name_error
+
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 # Lookup order matches the marketplace index loader in the Grok CLI.
@@ -40,7 +47,13 @@ CATALOG_PATHS = [
 def validate_entry(entry: dict, idx: int) -> list[str]:
     """Return a list of human-readable error strings for a single plugin entry."""
     errors: list[str] = []
-    name = entry.get("name") or f"<unnamed at index {idx}>"
+    raw_name = entry.get("name")
+    name_error = plugin_name_error(raw_name)
+    if name_error:
+        errors.append(f"plugin at index {idx}: {name_error}")
+        name = ascii(raw_name) if raw_name else f"<unnamed at index {idx}>"
+    else:
+        name = raw_name
     source = entry.get("source")
 
     # String-form sources like "./plugins/foo" are local paths; no sha needed.
@@ -103,11 +116,21 @@ def validate_file(path: Path) -> list[str]:
         return [f"{path}: `plugins` must be an array, got {type(plugins).__name__}"]
 
     errors: list[str] = []
+    seen: dict[str, int] = {}
     for idx, entry in enumerate(plugins):
         if not isinstance(entry, dict):
             errors.append(f"{path}: plugin index {idx} must be an object")
             continue
         errors.extend(f"{path}: {e}" for e in validate_entry(entry, idx))
+        name = entry.get("name")
+        if isinstance(name, str):
+            if name in seen:
+                errors.append(
+                    f"{path}: plugin '{name}' at index {idx} duplicates the "
+                    f"name at index {seen[name]}"
+                )
+            else:
+                seen[name] = idx
     return errors
 
 

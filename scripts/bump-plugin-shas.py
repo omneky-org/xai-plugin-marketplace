@@ -18,8 +18,14 @@ Stack shape (one run / Pacific day):
           ├── bump/YYYY-MM-DD/<plugin-b> PR → daily
           └── ...
 
-Default: if remote `bump/daily-YYYY-MM-DD` already exists, the run is a
-no-op. Pass `--force` to rebuild that day's stack from current main.
+If there are candidates and remote `bump/daily-YYYY-MM-DD` already exists,
+the run fails without pushing anything: the ref was not created by this run
+and its contents are not trusted as proof of a completed run. Pass `--force`
+to rebuild that day's stack from current main (force-pushes over it).
+
+A plugin whose pin or HEAD cannot be extracted (oversized/invalid config,
+invalid catalog name, fetch failure) is never bumped and makes the run exit
+nonzero; other plugins still get their PRs.
 
 Designed for GitHub Actions with GITHUB_TOKEN (contents + pull-requests write).
 Local: `--dry-run` (no push/PR).
@@ -482,8 +488,11 @@ def discover_candidates(
     *,
     only: str,
     freeze: set[str],
-) -> tuple[list[dict], list[dict]]:
+) -> tuple[list[dict], list[dict], list[str]]:
     """Find url pins where HEAD moved and the version gate allows a bump.
+
+    Returns (candidates, skipped, failures). Failures (invalid names,
+    extraction errors) must fail the run; they are never bumped.
 
     Version extraction uses plugin_catalog.extract_plugin (same path as the
     index generator).
@@ -498,11 +507,13 @@ def discover_candidates(
     catalog = load_catalog()
     candidates: list[dict] = []
     skipped: list[dict] = []
+    failures: list[str] = []
 
     for entry in url_entries(catalog):
         name = entry.get("name")
-        if not isinstance(name, str) or not name:
-            skipped.append({"name": "<unnamed>", "reason": "missing name"})
+        name_error = plugin_catalog.plugin_name_error(name)
+        if name_error:
+            failures.append(f"invalid catalog entry: {name_error}")
             continue
         if only and name != only:
             continue
@@ -554,7 +565,8 @@ def discover_candidates(
                     name=name,
                 )
         except Exception as e:  # noqa: BLE001
-            skipped.append({"name": name, "reason": f"extract failed: {e}"})
+            # Not a skip: a bad extract must fail the run, never pass silently.
+            failures.append(f"{name}: extract failed: {e}")
             continue
 
         old_version = pin_rec.get("version")
@@ -597,7 +609,7 @@ def discover_candidates(
             }
         )
 
-    return candidates, skipped
+    return candidates, skipped, failures
 
 
 def env_flag(name: str) -> bool:
@@ -684,44 +696,46 @@ def main() -> int:
             write_github_output(args.github_output, [], 0)
             return 1
 
-    candidates, skipped = discover_candidates(only=only, freeze=freeze)
+    candidates, skipped, failures = discover_candidates(only=only, freeze=freeze)
 
     print(f"day={day} daily_branch={daily_branch} force={force}")
-    print(f"candidates={len(candidates)} skipped={len(skipped)}")
+    print(
+        f"candidates={len(candidates)} skipped={len(skipped)} "
+        f"failed={len(failures)}"
+    )
     for s in skipped:
         print(f"  skip {s['name']}: {s['reason']}")
+    for f in failures:
+        print(f"ERROR: {f}", file=sys.stderr)
 
     pr_urls: list[dict] = []
-    errors: list[str] = []
+    errors: list[str] = list(failures)
     daily_pr: str | None = None
 
     if not candidates:
         print("nothing to bump")
         write_github_output(args.github_output, pr_urls, 0)
+        if errors:
+            print(f"{len(errors)} plugin(s) failed", file=sys.stderr)
+            return 1
         return 0
 
-    # Gate on remote branch existence (not open PR). Merged/closed daily still
-    # leaves the ref around unless deleted, so same-day re-runs stay no-ops.
+    # Gate on remote branch existence (not open PR). This run did not create
+    # the ref, and anyone with branch-push access can create it, so its
+    # presence is not proof that today's bumps ran. Fail visibly instead of
+    # reporting success; never overwrite it without an explicit --force.
     daily_exists = remote_branch_exists(daily_branch)
     if daily_exists and not force:
         print(
-            f"remote branch {daily_branch} already exists; no-op "
-            "(pass --force to rebuild and force-push this day's stack)"
+            f"ERROR: remote branch {daily_branch} already exists, so "
+            f"{len(candidates)} pending bump(s) were not published. Inspect "
+            "that branch; if it is safe to replace, re-run with --force "
+            "(workflow_dispatch force=true) to rebuild and force-push this "
+            "day's stack.",
+            file=sys.stderr,
         )
-        write_github_output(
-            args.github_output,
-            [
-                {
-                    "name": "_daily",
-                    "branch": daily_branch,
-                    "base": base_branch,
-                    "pr_url": "",
-                    "skipped": True,
-                }
-            ],
-            0,
-        )
-        return 0
+        write_github_output(args.github_output, [], 0)
+        return 1
 
     if daily_exists and force:
         print(f"remote branch {daily_branch} exists; --force rebuild from main")
@@ -827,7 +841,7 @@ def main() -> int:
     write_github_output(args.github_output, pr_urls, bumped)
 
     if errors:
-        print(f"{len(errors)} bump(s) failed", file=sys.stderr)
+        print(f"{len(errors)} plugin(s) failed", file=sys.stderr)
         return 1
     return 0
 

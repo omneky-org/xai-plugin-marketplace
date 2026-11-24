@@ -82,11 +82,21 @@ def generate(repo_root: Path) -> dict:
     with tempfile.TemporaryDirectory(prefix="plugin-index-") as tmp:
         tmp_root = Path(tmp)
         for idx, entry in enumerate(catalog.get("plugins", [])):
+            if not isinstance(entry, dict):
+                raise RuntimeError(f"catalog entry at index {idx} must be an object")
             name = entry.get("name")
             if not name:
                 raise RuntimeError("catalog entry without a name")
+            name_error = plugin_catalog.plugin_name_error(name)
+            if name_error:
+                raise RuntimeError(f"catalog entry at index {idx}: {name_error}")
+            if name in plugins_out:
+                raise RuntimeError(f"duplicate catalog plugin name {name!r}")
             root, sha = resolve_source(entry, repo_root, tmp_root, idx)
-            extracted = plugin_catalog.extract_plugin(root)
+            try:
+                extracted = plugin_catalog.extract_plugin(root)
+            except RuntimeError as e:
+                raise RuntimeError(f"plugin '{name}': {e}") from e
             record: dict = {}
             if sha:
                 record["sha"] = sha
