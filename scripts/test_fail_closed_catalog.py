@@ -444,6 +444,16 @@ class DiscoverTest(unittest.TestCase):
 
 
 class BumpMainTest(unittest.TestCase):
+    # main() reads argparse defaults from these; GitHub Actions sets
+    # GITHUB_OUTPUT on every runner, so the tests must not inherit them.
+    CLEAN_ENV = {
+        "FORCE_BUMP": "",
+        "GITHUB_OUTPUT": "",
+        "BASE_BRANCH": "main",
+        "BUMP_DAY": "",
+        "FREEZE_SHAS": "",
+        "RUN_URL": "",
+    }
     CANDIDATE = {
         "name": "good", "url": "https://github.com/o/good", "old_sha": "a" * 40,
         "new_sha": "c" * 40, "old_version": "1", "new_version": "2", "path": None,
@@ -464,8 +474,17 @@ class BumpMainTest(unittest.TestCase):
              mock.patch.object(bump, "apply_plugin_bump", self.apply), \
              mock.patch.object(bump, "write_github_output", self.output), \
              mock.patch.object(sys, "argv", ["bump", "--day", "2026-11-24", *argv]), \
-             mock.patch.dict(os.environ, {"FORCE_BUMP": ""}):
+             mock.patch.dict(os.environ, self.CLEAN_ENV):
             return bump.main()
+
+    def test_runner_environment_does_not_leak_into_main(self) -> None:
+        runner_env = {"GITHUB_OUTPUT": "/tmp/runner-output", "FORCE_BUMP": "true"}
+        with mock.patch.dict(os.environ, runner_env):
+            self.assertEqual(
+                self.run_main(candidates=[self.CANDIDATE], daily_exists=True), 1
+            )
+        self.output.assert_called_once_with("", [], 0)
+        self.open_daily.assert_not_called()
 
     def test_existing_daily_ref_fails_without_publishing(self) -> None:
         self.assertEqual(self.run_main(candidates=[self.CANDIDATE], daily_exists=True), 1)
