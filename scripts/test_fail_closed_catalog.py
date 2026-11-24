@@ -289,6 +289,15 @@ class CleanTest(PluginDir):
         self.write("hooks/hooks.json", {"Pre⁦ToolUse": []})
         self.assertFails(r"component name")
 
+    def test_component_names_changed_by_nfkc_fail(self) -> None:
+        for name in ["\uff53\uff54\uff52\uff49\uff50\uff45", "\ufb01nd", "dep\u00a0loy", "x\u2460"]:
+            with self.subTest(name=ascii(name)):
+                self.write("skills/s/SKILL.md", f"---\nname: {name}\n---\n")
+                self.assertFails(r"component name .* is not NFKC-normalized")
+        (self.root / "skills").rename(self.root / "unused")
+        self.write(".mcp.json", {"mcpServers": {"\uff56ercel": {"url": "https://x"}}})
+        self.assertFails(r"is not NFKC-normalized")
+
     def test_ordinary_unicode_component_name_allowed(self) -> None:
         self.write("skills/s/SKILL.md", "---\nname: 日本語\n---\n")
         self.assertEqual(self.components()["skills"], [{"name": "日本語"}])
