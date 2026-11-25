@@ -28,7 +28,6 @@ import time
 import unicodedata
 from pathlib import Path
 
-MAX_ITEMS_PER_CATEGORY = 50
 MAX_STRING_LEN = 120
 MAX_TEXT_READ_BYTES = 64 * 1024
 MAX_JSON_BYTES = 1 << 20
@@ -166,6 +165,37 @@ def locate(root: Path, relative) -> Path | None:
     return resolved
 
 
+class DuplicateKeyError(ValueError):
+    pass
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
+    # Keys arrive already unescaped, so "sha" and "\\u0073ha" collide here.
+    obj: dict = {}
+    for key, value in pairs:
+        if key in obj:
+            raise DuplicateKeyError(f"duplicate JSON object key {key!r}")
+        obj[key] = value
+    return obj
+
+
+def loads_strict(text: str):
+    """json.loads that rejects duplicate object keys.
+
+    The stdlib parser silently keeps the last duplicate, so a reviewer can read
+    one value while tooling and clients act on another.
+    """
+    return json.loads(text, object_pairs_hook=_reject_duplicate_keys)
+
+
+def load_catalog_file(path: Path):
+    """Strictly parse a marketplace catalog file (duplicate keys are errors)."""
+    try:
+        return loads_strict(path.read_text(encoding="utf-8"))
+    except DuplicateKeyError as e:
+        raise RuntimeError(f"{path}: {e}") from e
+
+
 def read_text_limited(path: Path) -> str:
     with open(path, encoding="utf-8", errors="replace") as f:
         return f.read(MAX_TEXT_READ_BYTES)
@@ -221,6 +251,27 @@ def optional_object(data: dict, key: str, label) -> dict | None:
             f"{label}: `{key}` must be an object, got {type(value).__name__}"
         )
     return value
+
+
+def load_declared_json(root: Path, rel, what: str) -> dict:
+    """Load a JSON file the manifest explicitly points at, or fail.
+
+    A manifest path is what the installer is told to load, so an escaping,
+    missing, or unreadable target must not silently drop out of the index.
+    """
+    path = resolve_inside(root, rel)
+    if path is None:
+        raise PluginExtractionError(
+            f"manifest {what} path escapes the plugin root: {rel!r}"
+        )
+    if not path.is_file():
+        raise PluginExtractionError(f"manifest {what} path not found: {rel!r}")
+    try:
+        return load_json_file(path, rel)
+    except PluginExtractionError as e:
+        raise PluginExtractionError(
+            f"manifest {what} path {rel!r} is not a readable JSON object: {e}"
+        ) from e
 
 
 def parse_frontmatter(path: Path) -> dict[str, str]:
@@ -376,61 +427,106 @@ def transport_hint(config: dict) -> str:
 def scan_mcp_servers(root: Path, manifest: dict) -> list[dict]:
     servers: dict[str, dict] = {}
     declared = manifest.get("mcpServers")
-    config_rel = declared if isinstance(declared, str) else ".mcp.json"
-    mcp_path = locate(root, config_rel)
-    if mcp_path is not None:
-        data = load_json_file(mcp_path, config_rel)
-        if optional_object(data, "mcpServers", config_rel) is not None:
-            servers.update(data["mcpServers"])
+    data = None
+    label = ".mcp.json"
+    if isinstance(declared, str):
+        label = declared
+        data = load_declared_json(root, declared, "mcpServers")
+    else:
+        mcp_path = locate(root, label)
+        if mcp_path is not None:
+            data = load_json_file(mcp_path, label)
+    if data is not None:
+        nested = optional_object(data, "mcpServers", label)
+        if nested is not None:
+            servers.update(nested)
     if isinstance(declared, dict):
         for name, config in declared.items():
             servers.setdefault(name, config)
     return [make_item(name, transport_hint(config)) for name, config in servers.items()]
 
 
-def scan_hooks(root: Path, manifest: dict) -> list[dict]:
-    data = None
-    label = "manifest hooks"
-    hooks_rel = Path("hooks") / "hooks.json"
-    hooks_path = locate(root, hooks_rel)
-    if hooks_path is not None:
-        label = hooks_rel
-        data = load_json_file(hooks_path, hooks_rel)
-    if data is None:
-        declared = manifest.get("hooks")
-        if isinstance(declared, dict):
-            data = declared
-        elif isinstance(declared, str):
-            declared_path = locate(root, declared)
-            if declared_path is not None:
-                label = declared
-                data = load_json_file(declared_path, declared)
-    if not isinstance(data, dict):
-        return []
+DEFAULT_HOOKS_PATH = Path("hooks") / "hooks.json"
+
+
+def hook_events(data: dict, label) -> dict[str, list[str]]:
+    """Map event name -> matchers for one hooks config object."""
     hooks_obj = optional_object(data, "hooks", label)
     if hooks_obj is None:
         hooks_obj = data
-    items = []
+    events: dict[str, list[str]] = {}
     for event, entries in hooks_obj.items():
         if not isinstance(entries, list):
             continue
-        matchers = [
+        events[event] = [
             e["matcher"]
             for e in entries
             if isinstance(e, dict) and isinstance(e.get("matcher"), str) and e["matcher"]
         ]
-        items.append(make_item(event, ", ".join(matchers)))
-    return items
+    return events
+
+
+def scan_hooks(root: Path, manifest: dict) -> list[dict]:
+    """Index hook events.
+
+    An explicit manifest `hooks` value (path, inline object, or a list of
+    those) is authoritative and replaces hooks/hooks.json. If the manifest
+    declares hooks and a separate hooks/hooks.json also exists, which one a
+    client loads depends on its semantics, so extraction fails rather than
+    indexing only one of them.
+    """
+    declared = manifest.get("hooks")
+    configs: list[tuple[dict, object]] = []
+    # locate() raises if the default path is present but escapes the root or
+    # is not a regular file, so it can never read as absent.
+    default_path = locate(root, DEFAULT_HOOKS_PATH)
+    if declared is None:
+        if default_path is not None:
+            configs.append(
+                (load_json_file(default_path, DEFAULT_HOOKS_PATH), DEFAULT_HOOKS_PATH)
+            )
+    else:
+        declared_paths: set[Path] = set()
+        for entry in declared if isinstance(declared, list) else [declared]:
+            if isinstance(entry, dict):
+                configs.append((entry, "manifest hooks"))
+            elif isinstance(entry, str):
+                configs.append((load_declared_json(root, entry, "hooks"), entry))
+                declared_paths.add(resolve_inside(root, entry))
+            else:
+                raise PluginExtractionError(
+                    f"manifest hooks entry must be a path or object, got "
+                    f"{type(entry).__name__}"
+                )
+        if default_path is not None and default_path not in declared_paths:
+            raise PluginExtractionError(
+                f"manifest declares hooks but {DEFAULT_HOOKS_PATH} also exists "
+                f"and is not one of the declared paths; reference it from the "
+                f"manifest or remove it so the index shows every hook that "
+                f"can load"
+            )
+    events: dict[str, list[str]] = {}
+    for config, label in configs:
+        for event, matchers in hook_events(config, label).items():
+            events.setdefault(event, []).extend(matchers)
+    return [make_item(event, ", ".join(matchers)) for event, matchers in events.items()]
 
 
 def scan_lsp_servers(root: Path, manifest: dict) -> list[dict]:
     servers: dict[str, dict] = {}
-    lsp_path = locate(root, ".lsp.json")
-    if lsp_path is not None:
-        data = load_json_file(lsp_path, ".lsp.json")
-        nested = optional_object(data, "lspServers", ".lsp.json")
-        servers.update(nested if nested is not None else data)
     declared = manifest.get("lspServers")
+    data = None
+    label = ".lsp.json"
+    if isinstance(declared, str):
+        label = declared
+        data = load_declared_json(root, declared, "lspServers")
+    else:
+        lsp_path = locate(root, label)
+        if lsp_path is not None:
+            data = load_json_file(lsp_path, label)
+    if data is not None:
+        nested = optional_object(data, "lspServers", label)
+        servers.update(nested if nested is not None else data)
     if isinstance(declared, dict):
         for name, config in declared.items():
             servers.setdefault(name, config)
@@ -464,9 +560,9 @@ def extract_plugin(root: Path) -> dict:
     }
     components = {}
     for key in sorted(categories):
-        items = sorted(categories[key], key=lambda i: i["name"])[
-            :MAX_ITEMS_PER_CATEGORY
-        ]
+        # Keep every item: the index is what reviewers read, so nothing that
+        # ships in the pinned tree may be dropped from it.
+        items = sorted(categories[key], key=lambda i: i["name"])
         if items:
             components[key] = items
 

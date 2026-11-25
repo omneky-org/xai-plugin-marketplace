@@ -77,7 +77,7 @@ def resolve_source(
 
 
 def generate(repo_root: Path) -> dict:
-    catalog = json.loads((repo_root / CATALOG_PATH).read_text(encoding="utf-8"))
+    catalog = plugin_catalog.load_catalog_file(repo_root / CATALOG_PATH)
     plugins_out: dict[str, dict] = {}
     with tempfile.TemporaryDirectory(prefix="plugin-index-") as tmp:
         tmp_root = Path(tmp)

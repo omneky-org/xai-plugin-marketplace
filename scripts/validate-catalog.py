@@ -12,6 +12,13 @@ and for every plugin with `"source": {"source": "url", ...}`:
   - `sha` is a 40-character lowercase hex string (full commit SHA, not a
     tag, branch, or abbreviation)
 
+Also enforces, for the whole catalog:
+
+  - no duplicate JSON object keys (including escaped-equivalent keys), so
+    the value a reviewer reads is the value tooling and clients use
+  - local plugin sources contain no files that .gitattributes hides in PR
+    diffs (linguist-generated, linguist-vendored, -diff)
+
 This is the catalog-level enforcement layer for SHA pinning. Without a
 pin, the installer would fall back to `git clone --branch <ref>` (or HEAD),
 which means a vendor force-push or repo compromise immediately ships to
@@ -28,12 +35,12 @@ Run locally:    python3 scripts/validate-catalog.py
 
 from __future__ import annotations
 
-import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
-from plugin_catalog import plugin_name_error
+import plugin_catalog
 
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
@@ -48,7 +55,7 @@ def validate_entry(entry: dict, idx: int) -> list[str]:
     """Return a list of human-readable error strings for a single plugin entry."""
     errors: list[str] = []
     raw_name = entry.get("name")
-    name_error = plugin_name_error(raw_name)
+    name_error = plugin_catalog.plugin_name_error(raw_name)
     if name_error:
         errors.append(f"plugin at index {idx}: {name_error}")
         name = ascii(raw_name) if raw_name else f"<unnamed at index {idx}>"
@@ -105,11 +112,77 @@ def validate_entry(entry: dict, idx: int) -> list[str]:
     return errors
 
 
+# Git attributes that hide file contents in GitHub PR diffs. Local plugin
+# files are reviewed in this repo's diff, so none of them may carry these.
+HIDING_ATTRS = ("linguist-generated", "linguist-vendored", "diff")
+
+
+def local_source_path(source) -> str | None:
+    if isinstance(source, str):
+        return source
+    if (
+        isinstance(source, dict)
+        and source.get("source") != "url"
+        and source.get("type") != "url"
+        and isinstance(source.get("path"), str)
+    ):
+        return source["path"]
+    return None
+
+
+def hidden_files(rel_root: str) -> list[str]:
+    """Tracked files under rel_root whose diffs GitHub collapses or hides."""
+    files = subprocess.run(
+        ["git", "ls-files", "-z", "--", rel_root],
+        capture_output=True,
+        check=True,
+    ).stdout
+    if not files:
+        return []
+    out = subprocess.run(
+        ["git", "check-attr", "-z", "--stdin", *HIDING_ATTRS],
+        input=files,
+        capture_output=True,
+        check=True,
+    ).stdout.decode("utf-8", "replace")
+    fields = out.split("\0")
+    hidden: set[str] = set()
+    for i in range(0, len(fields) - 2, 3):
+        path, attr, value = fields[i : i + 3]
+        if attr == "diff" and value == "unset":
+            hidden.add(path)
+        elif attr != "diff" and value not in ("unspecified", "unset", "false"):
+            hidden.add(path)
+    return sorted(hidden)
+
+
+def validate_local_source(entry: dict, idx: int) -> list[str]:
+    rel = local_source_path(entry.get("source"))
+    if rel is None:
+        return []
+    name = entry.get("name") or f"<unnamed at index {idx}>"
+    try:
+        hidden = hidden_files(rel)
+    except subprocess.CalledProcessError as e:
+        detail = (e.stderr or b"").decode("utf-8", "replace").strip()
+        return [f"plugin '{name}': cannot inspect local source {rel!r}: {detail}"]
+    if not hidden:
+        return []
+    shown = ", ".join(hidden[:5]) + (" ..." if len(hidden) > 5 else "")
+    return [
+        f"plugin '{name}': local source {rel!r} contains files marked "
+        f"{'/'.join(HIDING_ATTRS)} in .gitattributes, which hides them in PR "
+        f"diffs: {shown}"
+    ]
+
+
 def validate_file(path: Path) -> list[str]:
     try:
-        data = json.loads(path.read_text())
+        data = plugin_catalog.load_catalog_file(path)
     except Exception as e:
         return [f"{path}: failed to parse: {e}"]
+    if not isinstance(data, dict):
+        return [f"{path}: catalog must be a JSON object"]
 
     plugins = data.get("plugins", [])
     if not isinstance(plugins, list):
@@ -122,6 +195,7 @@ def validate_file(path: Path) -> list[str]:
             errors.append(f"{path}: plugin index {idx} must be an object")
             continue
         errors.extend(f"{path}: {e}" for e in validate_entry(entry, idx))
+        errors.extend(f"{path}: {e}" for e in validate_local_source(entry, idx))
         name = entry.get("name")
         if isinstance(name, str):
             if name in seen:

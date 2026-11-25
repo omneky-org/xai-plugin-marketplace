@@ -167,12 +167,23 @@ class HooksFallbackTest(PluginDir):
         self.write(".grok-plugin/plugin.json", self.MANIFEST_HOOKS)
         self.assertEqual(self.hook_names(), ["SessionStart"])
 
-    def test_invalid_default_does_not_fall_back_to_manifest(self) -> None:
-        self.write(".grok-plugin/plugin.json", self.MANIFEST_HOOKS)
+    def test_invalid_default_hooks_file_fails(self) -> None:
         self.write("hooks/hooks.json", padded_json(HOOKS, MAX_JSON_BYTES + 1))
         self.assertFails(r"hooks/hooks\.json: file exceeds")
         self.write("hooks/hooks.json", "{")
         self.assertFails(r"hooks/hooks\.json: invalid JSON")
+
+    def test_invalid_default_does_not_fall_back_to_manifest(self) -> None:
+        self.write(".grok-plugin/plugin.json", self.MANIFEST_HOOKS)
+        for bad in [padded_json(HOOKS, MAX_JSON_BYTES + 1), b"{"]:
+            with self.subTest(bad=bad[:10]):
+                self.write("hooks/hooks.json", bad)
+                self.assertFails(r"hooks/hooks\.json also exists")
+
+    def test_oversized_declared_hooks_path_fails(self) -> None:
+        self.write(".grok-plugin/plugin.json", {"hooks": "./hooks/hooks.json"})
+        self.write("hooks/hooks.json", padded_json(HOOKS, MAX_JSON_BYTES + 1))
+        self.assertFails(r"not a readable JSON object: \./hooks/hooks\.json: file exceeds")
 
     def test_custom_hooks_path(self) -> None:
         self.write(".grok-plugin/plugin.json", {"hooks": "./config/hooks.json"})
@@ -184,9 +195,9 @@ class HooksFallbackTest(PluginDir):
         self.write("config/hooks.json", "{oops")
         self.assertFails(r"config/hooks\.json: invalid JSON")
 
-    def test_custom_hooks_path_missing_is_empty(self) -> None:
+    def test_custom_hooks_path_missing_fails(self) -> None:
         self.write(".grok-plugin/plugin.json", {"hooks": "./config/hooks.json"})
-        self.assertNotIn("hooks", self.components())
+        self.assertFails(r"manifest hooks path not found")
 
     def test_hooks_symlink_outside_root_fails(self) -> None:
         outside = Path(self._tmp.name) / "outside.json"
