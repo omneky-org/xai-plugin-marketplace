@@ -293,6 +293,22 @@ class CleanTest(PluginDir):
                 self.write("skills/s/SKILL.md", f"---\nname: {name}\n---\n")
                 self.assertFails(r"component name .* contains invisible or bidirectional")
 
+    def test_component_names_with_whitespace_class_controls_fail(self) -> None:
+        points = [0x0B, 0x0C, 0x1C, 0x1D, 0x1E, 0x1F, 0x85, 0x09, 0x0A, 0x0D]
+        for cp in points:
+            name = f"dep{chr(cp)}loy"
+            with self.subTest(cp=f"U+{cp:04X}"):
+                self.write("skills/s/SKILL.md", f"---\nname: x\n---\n")
+                (self.root / ".mcp.json").write_text(
+                    json.dumps({"mcpServers": {name: {"url": "https://x"}}})
+                )
+                self.assertFails(r"component name .* contains invisible or bidirectional")
+                (self.root / ".mcp.json").unlink()
+                self.assertRaises(PluginExtractionError, plugin_catalog.make_item, name)
+
+    def test_plain_space_in_component_name_still_allowed(self) -> None:
+        self.assertEqual(plugin_catalog.make_item("my skill"), {"name": "my skill"})
+
     def test_server_and_hook_names_checked(self) -> None:
         self.write(".mcp.json", {"mcpServers": {"ve‮rcel": {"url": "https://x"}}})
         self.assertFails(r"component name")

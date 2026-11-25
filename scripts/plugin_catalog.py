@@ -109,12 +109,15 @@ def clean_name(name: str) -> str:
     """clean() for component identifiers; invisible characters are an error.
 
     Stripping would make the index show a different identifier than the one
-    the client stores, so refuse instead. Names that change under NFKC
+    the client stores, so refuse instead. Every Cc control character is
+    refused, including whitespace-class ones (tab, newline, VT, FF, FS-US,
+    NEL) that clean() would collapse. Plain U+0020 space is still allowed.
+    Names that change under NFKC
     (fullwidth, compatibility ligatures, non-breaking spaces, ...) are
     rejected too, since they render like a different identifier.
     """
     for ch in name:
-        if is_invisible(ch):
+        if is_invisible(ch) or unicodedata.category(ch) == "Cc":
             raise PluginExtractionError(
                 f"component name {ascii(name)} contains invisible or "
                 f"bidirectional control character U+{ord(ch):04X}"
