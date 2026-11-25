@@ -13,8 +13,10 @@ name: Bump plugin SHAs
 # All plugin PRs fan out from daily. Only the daily PR targets main, so main
 # history stays one landing per day. Manual review only; no auto-merge.
 #
-# If remote bump/daily-YYYY-MM-DD already exists, the run is a no-op unless
-# workflow_dispatch sets force=true (rebuild from main, force-push stack).
+# If there are pending bumps and remote bump/daily-YYYY-MM-DD already exists,
+# the run fails without pushing; workflow_dispatch with force=true rebuilds
+# from main and force-pushes the stack. Plugins whose config cannot be
+# extracted are never bumped and also fail the run.
 #
 # Uses the default GITHUB_TOKEN (contents + pull-requests + actions write).
 # PRs opened with GITHUB_TOKEN do not trigger on:pull_request, so after each
