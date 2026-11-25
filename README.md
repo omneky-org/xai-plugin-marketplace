@@ -34,6 +34,8 @@ A plugin is a directory bundling any combination of:
 
 An optional `plugin.json` manifest adds metadata or overrides component paths.
 
+Manifest `hooks`, `mcpServers`, and `lspServers` paths replace the defaults above and must exist inside the plugin. If the manifest declares `hooks`, any `hooks/hooks.json` must be one of the declared paths. Index generation fails otherwise.
+
 ## Catalog format
 
 `.grok-plugin/marketplace.json`:
