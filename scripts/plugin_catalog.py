@@ -115,6 +115,10 @@ def clean_name(name: str) -> str:
     Names that change under NFKC
     (fullwidth, compatibility ligatures, non-breaking spaces, ...) are
     rejected too, since they render like a different identifier.
+
+    Finally, the invariant clean(name) == name must hold: any remaining
+    change (Zl/Zp/other Z* separators, leading/trailing or repeated spaces,
+    truncation) is refused. Only a single interior U+0020 survives.
     """
     for ch in name:
         if is_invisible(ch) or unicodedata.category(ch) == "Cc":
@@ -127,7 +131,15 @@ def clean_name(name: str) -> str:
             f"component name {ascii(name)} is not NFKC-normalized "
             f"(renders like {ascii(unicodedata.normalize('NFKC', name))})"
         )
-    return clean(name)
+    cleaned = clean(name)
+    if cleaned != name:
+        raise PluginExtractionError(
+            f"component name {ascii(name)} would be indexed as "
+            f"{ascii(cleaned)} (separators, edge or repeated whitespace, or "
+            f"over {MAX_STRING_LEN} characters); names must survive "
+            f"sanitizing unchanged"
+        )
+    return cleaned
 
 
 def resolve_inside(root: Path, relative) -> Path | None:

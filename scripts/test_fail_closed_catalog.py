@@ -306,6 +306,37 @@ class CleanTest(PluginDir):
                 (self.root / ".mcp.json").unlink()
                 self.assertRaises(PluginExtractionError, plugin_catalog.make_item, name)
 
+    def test_component_names_that_clean_would_change_fail(self) -> None:
+        cases = {
+            "U+2028 interior": "dep\u2028loy",
+            "U+2029 interior": "dep\u2029loy",
+            "U+2028 trailing": "deploy\u2028",
+            "U+2029 leading": "\u2029deploy",
+            "U+2000 en quad": "dep\u2000loy",
+            "U+2003 em space": "dep\u2003loy",
+            "U+3000 ideographic": "dep\u3000loy",
+            "U+1680 ogham": "dep\u1680loy",
+            "U+202F narrow nbsp": "dep\u202floy",
+            "double space": "dep  loy",
+            "leading space": " deploy",
+            "trailing space": "deploy ",
+            "over length": "a" * (MAX_STRING_LEN + 1),
+        }
+        for label, name in cases.items():
+            with self.subTest(case=label):
+                with self.assertRaises(PluginExtractionError):
+                    plugin_catalog.make_item(name)
+                self.write("skills/s/SKILL.md", "---\nname: x\n---\n")
+                (self.root / ".mcp.json").write_text(
+                    json.dumps({"mcpServers": {name: {"url": "https://x"}}})
+                )
+                self.assertFails(r"component name")
+                (self.root / ".mcp.json").unlink()
+
+    def test_valid_component_names_unchanged_by_invariant(self) -> None:
+        for name in ["my skill", "deploy", "a" * MAX_STRING_LEN, "日本語", "مرحبا بالعالم"]:
+            self.assertEqual(plugin_catalog.make_item(name), {"name": name})
+
     def test_plain_space_in_component_name_still_allowed(self) -> None:
         self.assertEqual(plugin_catalog.make_item("my skill"), {"name": "my skill"})
 
